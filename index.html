@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MSY New Orleans LIVE — Viewer Count</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #181b24;
+    --panel-2: #1f232f;
+    --border: #2a2f3c;
+    --text: #e6e9ef;
+    --muted: #8b93a7;
+    --accent: #4ea1ff;
+    --accent-soft: rgba(78, 161, 255, 0.15);
+    --green: #36d399;
+    --red: #f87272;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .live-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--red); margin-right: 6px; vertical-align: middle;
+    box-shadow: 0 0 0 0 rgba(248, 114, 114, 0.6);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(248, 114, 114, 0.5); }
+    70% { box-shadow: 0 0 0 8px rgba(248, 114, 114, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(248, 114, 114, 0); }
+  }
+  main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .card .value { font-size: 28px; font-weight: 700; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .card .value.current { color: var(--accent); }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px; flex-wrap: wrap; gap: 10px;
+  }
+  .panel-head h2 { font-size: 14px; margin: 0; font-weight: 600; color: var(--text); }
+  .ranges { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ranges button {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .ranges button:hover { color: var(--text); border-color: var(--accent); }
+  .ranges button.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  #chart { width: 100%; }
+  .footer { color: var(--muted); font-size: 12px; margin-top: 16px; text-align: center; }
+  .footer a { color: var(--accent); text-decoration: none; }
+  .status { font-size: 12px; color: var(--muted); }
+  .uplot { font-family: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1><span class="live-dot"></span>MSY New Orleans LIVE 24/7</h1>
+    <div class="sub">Concurrent YouTube viewers · sampled every ~5 min</div>
+  </div>
+  <div class="status" id="status">Loading…</div>
+</header>
+
+<main>
+  <div class="cards">
+    <div class="card"><div class="label">Current</div><div class="value current" id="stat-current">—</div></div>
+    <div class="card"><div class="label">Peak (range)</div><div class="value" id="stat-peak">—</div></div>
+    <div class="card"><div class="label">Low (range)</div><div class="value" id="stat-low">—</div></div>
+    <div class="card"><div class="label">Average (range)</div><div class="value" id="stat-avg">—</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Viewers over time</h2>
+      <div class="ranges" id="ranges">
+        <button data-h="6">6h</button>
+        <button data-h="24" class="active">24h</button>
+        <button data-h="168">7d</button>
+        <button data-h="720">30d</button>
+        <button data-h="0">All</button>
+      </div>
+    </div>
+    <div id="chart"></div>
+  </div>
+
+  <div class="footer">
+    Data committed to this repo by GitHub Actions ·
+    <a href="https://www.youtube.com/watch?v=MH0_mPt-VXE" target="_blank" rel="noopener">Watch the stream</a>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+<script>
+const DATA_URL = "data/viewers.csv";
+const MAX_POINTS = 4000; // downsample threshold for browser performance
+
+let rawTimes = [];
+let rawViewers = [];
+let chart = null;
+let rangeHours = 24;
+
+async function loadData() {
+  const res = await fetch(`${DATA_URL}?t=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  const lines = text.trim().split("\n");
+  const times = [];
+  const viewers = [];
+  for (let i = 1; i < lines.length; i++) { // skip header
+    const line = lines[i].trim();
+    if (!line) continue;
+    const [ts, v] = line.split(",");
+    const t = parseInt(ts, 10);
+    if (Number.isNaN(t)) continue;
+    times.push(t);
+    viewers.push(v === "" || v === undefined ? null : parseInt(v, 10));
+  }
+  rawTimes = times;
+  rawViewers = viewers;
+}
+
+function sliceRange() {
+  if (rangeHours === 0 || rawTimes.length === 0) {
+    return [rawTimes.slice(), rawViewers.slice()];
+  }
+  const cutoff = Math.floor(Date.now() / 1000) - rangeHours * 3600;
+  const xs = [];
+  const ys = [];
+  for (let i = 0; i < rawTimes.length; i++) {
+    if (rawTimes[i] >= cutoff) {
+      xs.push(rawTimes[i]);
+      ys.push(rawViewers[i]);
+    }
+  }
+  return [xs, ys];
+}
+
+function downsample(xs, ys) {
+  if (xs.length <= MAX_POINTS) return [xs, ys];
+  const stride = Math.ceil(xs.length / MAX_POINTS);
+  const dx = [];
+  const dy = [];
+  for (let i = 0; i < xs.length; i += stride) {
+    dx.push(xs[i]);
+    dy.push(ys[i]);
+  }
+  // always keep the most recent point
+  if (dx[dx.length - 1] !== xs[xs.length - 1]) {
+    dx.push(xs[xs.length - 1]);
+    dy.push(ys[ys.length - 1]);
+  }
+  return [dx, dy];
+}
+
+function fmt(n) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "—";
+  return n.toLocaleString("en-US");
+}
+
+function updateStats(ys) {
+  const valid = ys.filter((v) => v !== null && !Number.isNaN(v));
+  let current = "—";
+  for (let i = rawViewers.length - 1; i >= 0; i--) {
+    if (rawViewers[i] !== null && !Number.isNaN(rawViewers[i])) { current = rawViewers[i]; break; }
+  }
+  document.getElementById("stat-current").textContent = fmt(current);
+  if (valid.length === 0) {
+    document.getElementById("stat-peak").textContent = "—";
+    document.getElementById("stat-low").textContent = "—";
+    document.getElementById("stat-avg").textContent = "—";
+    return;
+  }
+  const peak = Math.max(...valid);
+  const low = Math.min(...valid);
+  const avg = Math.round(valid.reduce((a, b) => a + b, 0) / valid.length);
+  document.getElementById("stat-peak").textContent = fmt(peak);
+  document.getElementById("stat-low").textContent = fmt(low);
+  document.getElementById("stat-avg").textContent = fmt(avg);
+}
+
+function render() {
+  let [xs, ys] = sliceRange();
+  updateStats(ys);
+  [xs, ys] = downsample(xs, ys);
+
+  const data = [xs, ys];
+  const width = document.getElementById("chart").clientWidth || 900;
+
+  const opts = {
+    width: width,
+    height: 420,
+    cursor: { y: false },
+    scales: { x: { time: true } },
+    series: [
+      {},
+      {
+        label: "Viewers",
+        stroke: "#4ea1ff",
+        width: 2,
+        fill: "rgba(78, 161, 255, 0.12)",
+        points: { show: false },
+        spanGaps: false,
+        value: (u, v) => (v == null ? "—" : v.toLocaleString("en-US")),
+      },
+    ],
+    axes: [
+      {
+        stroke: "#8b93a7",
+        grid: { stroke: "rgba(42, 47, 60, 0.6)" },
+        ticks: { stroke: "rgba(42, 47, 60, 0.6)" },
+      },
+      {
+        stroke: "#8b93a7",
+        grid: { stroke: "rgba(42, 47, 60, 0.6)" },
+        ticks: { stroke: "rgba(42, 47, 60, 0.6)" },
+        size: 60,
+      },
+    ],
+  };
+
+  if (chart) {
+    chart.setSize({ width: width, height: 420 });
+    chart.setData(data);
+  } else {
+    chart = new uPlot(opts, data, document.getElementById("chart"));
+  }
+}
+
+function setStatus(ok) {
+  const el = document.getElementById("status");
+  if (ok) {
+    const last = rawTimes.length ? new Date(rawTimes[rawTimes.length - 1] * 1000) : null;
+    el.textContent = last
+      ? `${rawTimes.length.toLocaleString()} samples · last update ${last.toLocaleString()}`
+      : "No data yet";
+  } else {
+    el.textContent = "Failed to load data";
+  }
+}
+
+document.getElementById("ranges").addEventListener("click", (e) => {
+  if (e.target.tagName !== "BUTTON") return;
+  rangeHours = parseInt(e.target.dataset.h, 10);
+  document.querySelectorAll("#ranges button").forEach((b) => b.classList.remove("active"));
+  e.target.classList.add("active");
+  render();
+});
+
+window.addEventListener("resize", () => { if (chart) render(); });
+
+async function refresh() {
+  try {
+    await loadData();
+    render();
+    setStatus(true);
+  } catch (err) {
+    console.error(err);
+    setStatus(false);
+  }
+}
+
+refresh();
+// Auto-refresh every 2 minutes so the dashboard picks up new commits.
+setInterval(refresh, 120000);
+</script>
+</body>
+</html>

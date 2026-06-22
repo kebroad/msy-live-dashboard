@@ -1,0 +1,2 @@
+# The fetch script uses only the Python standard library, so there are no
+# runtime dependencies. This file exists for clarity and future additions.
